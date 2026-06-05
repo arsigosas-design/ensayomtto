@@ -1,34 +1,33 @@
 """
 Agente de ventas - Sierra Urbanística
-Redacta y envía correos comerciales personalizados a constructoras via Outlook.
+Redacta y envía correos comerciales personalizados a constructoras via SMTP (Outlook personal).
 
 Requisitos:
-- pip install anthropic msal requests
-- Crear app en Azure AD con permiso Mail.Send
+- pip install anthropic
 - Configurar variables de entorno (ver .env.example)
 """
 
 import json
 import os
+import smtplib
+import re
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import anthropic
-import msal
-import requests
 
 # --- Configuración ---
 
 CLIENT = anthropic.Anthropic()
 MODEL = "claude-sonnet-4-6"
 
-# Credenciales de Azure AD / Microsoft Graph
-TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
-CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
-CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "camilo.arbelaez@outlook.com")
+SENDER_PASSWORD = os.environ.get("OUTLOOK_APP_PASSWORD", "")  # contraseña de aplicación
 
-GRAPH_API = "https://graph.microsoft.com/v1.0"
+SMTP_HOST = "smtp-mail.outlook.com"
+SMTP_PORT = 587
 
 # Información de Sierra Urbanística (extraída del brochure oficial)
-PERFIL_EMPRESA = f"""
+PERFIL_EMPRESA = """
 SIERRA URBANÍSTICA — Empresa colombiana con sede en Medellín, Antioquia.
 Misión: "Tenemos la vocación de transformar territorios y construir oportunidades."
 Web: www.sierraurbanistica.com
@@ -69,20 +68,6 @@ CONTACTO:
 """
 
 
-# --- Autenticación Microsoft Graph ---
-
-def get_access_token() -> str:
-    app = msal.ConfidentialClientApplication(
-        CLIENT_ID,
-        authority=f"https://login.microsoftonline.com/{TENANT_ID}",
-        client_credential=CLIENT_SECRET,
-    )
-    result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
-    if "access_token" not in result:
-        raise RuntimeError(f"Error de autenticación: {result.get('error_description')}")
-    return result["access_token"]
-
-
 # --- Herramientas del agente ---
 
 TOOLS = [
@@ -90,7 +75,7 @@ TOOLS = [
         "name": "redactar_correo",
         "description": (
             "Redacta un correo comercial personalizado para una constructora, "
-            "basado en el perfil de la empresa y los datos del destinatario."
+            "basado en el perfil de Sierra Urbanística y los datos del destinatario."
         ),
         "input_schema": {
             "type": "object",
@@ -99,7 +84,7 @@ TOOLS = [
                 "nombre_contacto": {"type": "string", "description": "Nombre del contacto (opcional)"},
                 "enfoque": {
                     "type": "string",
-                    "description": "Servicio o necesidad específica a destacar (opcional)",
+                    "description": "Servicio específico a destacar (opcional)",
                 },
             },
             "required": ["nombre_empresa"],
@@ -107,7 +92,7 @@ TOOLS = [
     },
     {
         "name": "enviar_correo",
-        "description": "Envía un correo electrónico via Outlook usando Microsoft Graph API.",
+        "description": "Envía un correo electrónico via SMTP usando Outlook.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -139,14 +124,11 @@ TOOLS = [
 # --- Implementación de herramientas ---
 
 def redactar_correo(nombre_empresa: str, nombre_contacto: str = "", enfoque: str = "") -> str:
-    """Usa Claude para redactar un correo personalizado."""
     saludo = f"Estimado equipo de {nombre_empresa}"
     if nombre_contacto:
         saludo = f"Estimado/a {nombre_contacto}"
 
-    enfoque_extra = ""
-    if enfoque:
-        enfoque_extra = f"\nDestaca especialmente el servicio de: {enfoque}"
+    enfoque_extra = f"\nDestaca especialmente el servicio de: {enfoque}" if enfoque else ""
 
     prompt = f"""Redacta un correo comercial profesional y cálido de parte de Sierra Urbanística
 para la constructora '{nombre_empresa}'.{enfoque_extra}
@@ -158,16 +140,17 @@ El correo debe:
 - Usar el saludo: "{saludo}"
 - Ser conciso (máximo 4 párrafos)
 - Mencionar 1-2 servicios relevantes para una constructora
-- Incluir un llamado a la acción claro (agendar reunión o llamada)
+- Incluir un llamado a la acción claro (agendar reunión o llamada al 313 7374484)
 - Formato HTML limpio (usa <p>, <strong>, <br>)
+- Firma con: Camilo Arbeláez | Sierra Urbanística | 313 7374484 | www.sierraurbanistica.com
 - Tono profesional pero cercano, en español
 
-Devuelve SOLO el HTML del cuerpo del correo y el asunto en JSON:
+Devuelve SOLO un JSON válido con esta estructura (sin texto adicional):
 {{"asunto": "...", "cuerpo_html": "..."}}"""
 
     resp = CLIENT.messages.create(
         model=MODEL,
-        max_tokens=1024,
+        max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.content[0].text
@@ -179,38 +162,27 @@ def enviar_correo(
     cuerpo_html: str,
     destinatario_nombre: str = "",
 ) -> str:
-    """Envía correo via Microsoft Graph API."""
+    if not SENDER_PASSWORD:
+        return "error: falta OUTLOOK_APP_PASSWORD en las variables de entorno"
+
     try:
-        token = get_access_token()
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = asunto
+        msg["From"] = f"Sierra Urbanística <{SENDER_EMAIL}>"
+        msg["To"] = f"{destinatario_nombre} <{destinatario_email}>" if destinatario_nombre else destinatario_email
 
-        payload = {
-            "message": {
-                "subject": asunto,
-                "body": {"contentType": "HTML", "content": cuerpo_html},
-                "toRecipients": [
-                    {
-                        "emailAddress": {
-                            "address": destinatario_email,
-                            "name": destinatario_nombre or destinatario_email,
-                        }
-                    }
-                ],
-            },
-            "saveToSentItems": True,
-        }
+        msg.attach(MIMEText(cuerpo_html, "html", "utf-8"))
 
-        resp = requests.post(
-            f"{GRAPH_API}/users/{SENDER_EMAIL}/sendMail",
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.sendmail(SENDER_EMAIL, destinatario_email, msg.as_string())
 
-        if resp.status_code == 202:
-            return "enviado"
-        return f"error_{resp.status_code}: {resp.text}"
+        return "enviado"
 
+    except smtplib.SMTPAuthenticationError:
+        return "error_auth: credenciales incorrectas. Verifica SENDER_EMAIL y OUTLOOK_APP_PASSWORD"
     except Exception as e:
         return f"excepcion: {e}"
 
@@ -232,7 +204,7 @@ def ejecutar_herramienta(nombre: str, params: dict) -> str:
     return f"Herramienta '{nombre}' no encontrada"
 
 
-# --- Loop del agente ---
+# --- Loop principal del agente ---
 
 def run_agent(tarea: str) -> str:
     messages = [{"role": "user", "content": tarea}]
@@ -241,10 +213,10 @@ def run_agent(tarea: str) -> str:
 Tu misión es redactar y enviar correos comerciales personalizados a constructoras.
 
 Flujo para cada constructora:
-1. Usa 'redactar_correo' para crear el correo personalizado
-2. Parsea el JSON devuelto para obtener asunto y cuerpo_html
-3. Usa 'enviar_correo' con los datos del destinatario
-4. Usa 'registrar_envio' con el resultado
+1. Llama a 'redactar_correo' para generar el correo
+2. Parsea el JSON devuelto para extraer 'asunto' y 'cuerpo_html'
+3. Llama a 'enviar_correo' con el email del destinatario, asunto y cuerpo
+4. Llama a 'registrar_envio' con el resultado obtenido
 
 Perfil de la empresa:
 {PERFIL_EMPRESA}"""
@@ -264,7 +236,7 @@ Perfil de la empresa:
             for block in response.content:
                 if block.type == "tool_use":
                     resultado = ejecutar_herramienta(block.name, block.input)
-                    print(f"  [{block.name}] → {str(resultado)[:120]}")
+                    print(f"  [{block.name}] → {str(resultado)[:150]}")
                     results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -278,11 +250,11 @@ Perfil de la empresa:
 # --- Punto de entrada ---
 
 if __name__ == "__main__":
-    # Lista de constructoras destino
+    # ✏️ Edita esta lista con las constructoras reales a las que quieres escribir
     constructoras = [
-        {"empresa": "Constructora Bolívar", "email": "contacto@cbolvar.com", "contacto": "Gerencia Comercial"},
+        {"empresa": "Constructora Bolívar", "email": "contacto@constructorabolivar.com", "contacto": "Gerencia Comercial"},
         {"empresa": "Coninsa Ramon H.", "email": "info@coninsa.co", "contacto": ""},
-        {"empresa": "Constructora Nación", "email": "ventas@cnacion.com", "contacto": ""},
+        {"empresa": "Constructora Nación", "email": "ventas@constructoranacion.com", "contacto": ""},
     ]
 
     tarea = f"""Ejecuta la campaña de correos comerciales de Sierra Urbanística.
@@ -290,13 +262,14 @@ if __name__ == "__main__":
 Envía un correo personalizado a cada una de estas constructoras:
 {json.dumps(constructoras, ensure_ascii=False, indent=2)}
 
-Para cada una: redacta el correo, envíalo y registra el resultado."""
+Para cada constructora: redacta el correo, envíalo y registra el resultado."""
 
-    print("Iniciando campaña de correos...\n")
+    print("Iniciando campaña de correos Sierra Urbanística...\n")
     resumen = run_agent(tarea)
-    print(f"\nResumen:\n{resumen}")
+    print(f"\nResumen del agente:\n{resumen}")
 
     if _log_envios:
         print("\nLog de envíos:")
         for entry in _log_envios:
-            print(f"  ✓ {entry['empresa']} ({entry['email']}) → {entry['estado']}")
+            icono = "✓" if entry["estado"] == "enviado" else "✗"
+            print(f"  {icono} {entry['empresa']} ({entry['email']}) → {entry['estado']}")
