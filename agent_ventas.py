@@ -23,27 +23,50 @@ MODEL = "claude-sonnet-4-6"
 TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
 CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "")  # tu correo de Outlook
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "camilo.arbelaez@outlook.com")
 
 GRAPH_API = "https://graph.microsoft.com/v1.0"
 
-# Información de Sierra Urbanística (se enriquece con el brochure)
-PERFIL_EMPRESA = """
-Sierra Urbanística es una empresa especializada en:
-- Movimientos de tierra: descapote, excavación, llenos y compactación
-- Construcción de vías: vías vehiculares, peatonales, andenes y adoquines
-- Urbanismos: redes de servicios públicos, zonas verdes, parques y espacios comunes
+# Información de Sierra Urbanística (extraída del brochure oficial)
+PERFIL_EMPRESA = f"""
+SIERRA URBANÍSTICA — Empresa colombiana con sede en Medellín, Antioquia.
+Misión: "Tenemos la vocación de transformar territorios y construir oportunidades."
+Web: www.sierraurbanistica.com
 
-Diferenciadores:
-- Experiencia comprobada en proyectos residenciales y comerciales
-- Equipo técnico especializado
-- Cumplimiento de plazos y estándares de calidad
-- Capacidad para manejar proyectos de gran escala
+SERVICIOS PRINCIPALES:
 
-Datos de contacto:
-- Empresa: Sierra Urbanística
-- Correo: {sender_email}
-""".format(sender_email=SENDER_EMAIL)
+1. Desarrollo de obras de urbanismo:
+   - Ejecución de movimientos de tierra (descapote, excavación, llenos, compactación)
+   - Aplicación de estructuras de pavimentos (vías vehiculares, peatonales, andenes)
+   - Instalación de acueductos y alcantarillado
+   - Instalación de redes de gas
+
+2. Comercialización de materiales pétreos para construcción:
+   - Bases granulares
+   - Triturados
+   - Arenas
+   - Otros materiales pétreos en portafolio
+
+DIFERENCIADORES:
+- Calidad garantizada desde el origen
+- Red logística eficiente para transporte y entrega de materiales con cobertura
+  en todo el departamento de Antioquia
+- Experiencia en construcción de proyectos urbanísticos sostenibles
+- Compromiso con el desarrollo de los territorios
+- Soluciones integrales, confiables y de alta calidad
+
+ALIADOS ESTRATÉGICOS (respaldan nuestra capacidad):
+- Cantera Santa Rita
+- Asfaltos Medellín S.A.S
+- Triturados Peñalisa S.A.
+- Postequipos S.A.S (prefabricados de concreto)
+
+CONTACTO:
+- Correo: camilo.arbelaez@outlook.com
+- Celular: 313 7374484
+- Dirección: CR 43A # 19 A 87, Medellín
+- Web: www.sierraurbanistica.com
+"""
 
 
 # --- Autenticación Microsoft Graph ---
